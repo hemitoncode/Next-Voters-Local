@@ -1,39 +1,32 @@
 %% AI Politician Accountability System
 flowchart LR
+  %% Collection
   subgraph Collection[Data Collection]
-    UL[User Location Module (Python)] --> ON[OpenNorth API Fetcher]
+    UL["User Location (Python)\n– gets lat/long"] --> ON["OpenNorth API Fetcher\n– fetches representatives by point"]
   end
 
-  ON --> MQ[Message Queue / Task Queue]
+  ON --> MQ["Task Queue\n– queue research jobs"]
 
-  subgraph Manager[Deep Research Manager]
-    MQ --> MGR[Manager / Orchestrator]
-    MGR --> A1[Political Activities Agent]
-    MGR --> A2[Personal Controversies Agent]
-    MGR --> A3[Voting Record & Policy Agent]
+  %% Manager / Agents
+  subgraph Manager[Deep Research Agent - Manager Pattern]
+    MQ --> MGR["Orchestrator\n– dispatches tasks to agents"]
+    MGR --> A1["Agent: Political Activities\n– finds public political actions"]
+    MGR --> A2["Agent: Controversies\n– searches for personal controversies"]
+    MGR --> A3["Agent: Voting & Policy\n– collects voting records and stated positions"]
   end
 
-  A1 --> SUP[Supervisor Agent (aggregates HTML & meta)]
+  A1 --> SUP["Supervisor\n– collects HTML + metadata"]
   A2 --> SUP
   A3 --> SUP
 
-  SUP --> DB[Raw HTML Store (DB / Blob Storage)]
-  SUP --> EMB[Embedding Service / Vector DB]
-  SUP --> SUM[Summarizer LLM]
+  %% Post-processing & Storage
+  SUP --> SUM["Summarizer LLM\n– summarizes collected HTML"]
 
-  SUM --> ADT[Adult Summary Service (semi-formal)]
-  SUM --> KID[Kid Summary Service (slang, fine-tuned LLM)]
+  SUM --> ADT["Adult Summary\n– semi-formal summary for adults"]
+  SUM --> KID["Kid Summary (fine-tuned)\n– slang/age-appropriate summary for kids"]
 
-  ADT --> UIAdult[Adult UI (web/mobile)]
-  KID --> UIKid[Kid UI (engaging, age-appropriate)]
+  ADT --> UIAdult["Adult UI\n– web/mobile interface"]
+  KID --> UIKid["Kid UI\n– simplified, engaging interface"]
 
-  subgraph Ops[Infrastructure & Ops]
-    SCHED[Scheduler / Cron] --> MGR
-    MON[Monitoring & Audit Logs] --> DB
-    CACHE[Embedding Cache] --> SUM
-    FT[Fine-tune Pipeline] --> KID
-    AUTH[Auth & Rate Limiting] --> ON
-  end
-
-  classDef box stroke:#333,stroke-width:1px,fill:#f9f9f9;
-  class Collection,Manager,Ops box;
+  classDef box stroke:#333,stroke-width:1px,fill:#f3f4f6;
+  class Collection,Manager box;
