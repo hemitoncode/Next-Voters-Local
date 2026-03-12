@@ -1,68 +1,113 @@
 # AI Politician Accountability — System Design
 
-## Overview
-This design describes an AI agent system that collects representative data (via OpenNorth), runs deep research agents to gather evidence about a politician, and produces age‑appropriate summaries for adults and children.
+## Goal
 
-## Data Source
-- Primary: OpenNorth representatives API (by lat/long).
+An AI agentic system for **politician accountability** — it scrapes legislation data, finds politician positions on that legislation, neutralizes political rhetoric/bias, and presents factual information to end users. The system targets Canadian politics initially, using the OpenNorth API for representative data.
 
-Example request (Python module provides lat/long):
+## Architecture Decisions (Finalized)
 
-```
-https://represent.opennorth.ca/representatives/house-of-commons/?point=45.524%2C-73.596
-```
+- **No supervisor pattern** — the pipeline is sequential; each agent depends on the previous agent's output. A supervisor would be a wasted LLM call since routing is always the same.
+- **No planner-executor pattern** — same reasoning. The plan would be identical every run. Just a static LangGraph DAG.
+- **Linear sequential chain** — `Agent 1 (ReAct) → Agent 2 (ReAct) → Agent 3 (ReAct) → Redactor (code) → Rhetoric LLM (call) → Judge LLM (call) → Research LLM (call) → Vector DB write (code) → Presentation LLM (call) → Output`
+- **Do not over-engineer** — keep things simple and direct for engineering purposes.
+- **Minimal agency principle** — only use true ReAct agents where autonomous decision-making is required (search/evaluate/retry loops, code debugging). Everything else is either a single LLM call or pure deterministic code. This was a deliberate reclassification to eliminate wasted LLM reasoning on steps that have no real decisions.
 
-Example (trimmed) response:
+## Pipeline Components
 
-```json
-{
-  "objects": [
-    {
-      "name": "Rachel Bendayan",
-      "district_name": "Outremont",
-      "elected_office": "MP",
-      "party_name": "Liberal",
-      "email": "Rachel.Bendayan@parl.gc.ca",
-      "url": "https://www.ourcommons.ca/Members/en/rachel-bendayan(88567)",
-      "photo_url": "https://.../BendayanRachel_Lib.jpg",
-      "offices": [ /* ... */ ]
-    }
-  ],
-  "meta": { "total_count": 1 }
-}
-```
+### ReAct Agents (3) — autonomous tool-use loops, real decision-making
 
-## High-level Flow
-1. User Location Module (Python) provides lat/long.
-2. OpenNorth API Fetcher retrieves representative(s) for that point.
-3. Manager / Orchestrator enqueues and dispatches research tasks to multiple agents.
-4. Agents (parallel): political activities, personal controversies, voting & policy (and optionally media coverage).
-5. Supervisor collects raw HTML and metadata from agent results and stores the source.
-6. Summarizer LLM ingests collected HTML and creates two formats: Adult Summary (semi-formal) and Kid Summary (age-appropriate slang/fine-tuned).
-7. Summaries are exposed through simple UIs (Adult UI, Kid UI).
+1. **Agent 1: Legislation Finder** — searches web for legislation, validates source reliability, retries with different queries if results are poor. Returns URLs + bill metadata. Needs agency because search targets are unpredictable and source reliability evaluation may require re-searching.
+2. **Agent 2: Scraper Builder** — generates Python scraping code, executes via REPL, filters by date (last 7 days). Includes a debugging tool to inspect and fix its own code. Needs agency because it scrapes arbitrary URLs with unpredictable HTML structures — LLM-generated code may fail and needs self-correction.
+3. **Agent 3: Politician Position Finder** — finds politician statements, press releases, floor speeches, vote records across multiple source types. Needs agency because it makes relevance judgments about results and decides whether to keep searching.
 
-## Components & Short Descriptors
-- User Location Module — obtains user coordinates (Python), feeds the OpenNorth request.
-- OpenNorth API Fetcher — queries the OpenNorth endpoint for representatives by point.
-- Task Queue — queues research jobs for the manager to process.
-- Manager / Orchestrator — dispatches jobs to specialized agents and tracks progress.
-- Agent: Political Activities — finds public political actions (bills, motions, public statements).
-- Agent: Controversies — searches for personal controversies, ethics reports, news items.
-- Agent: Voting & Policy — collects voting records, public positions, and policy stances.
-- (Optional) Agent: Media Coverage — aggregates recent coverage and sentiment.
-- Supervisor — aggregates raw HTML and metadata returned by agents; stores source pages.
-- Raw HTML Store — blob storage for source pages (keeps provenance).
-- Summarizer LLM — model tuned to summarize HTML into concise prose.
-- Adult Summary — semi-formal, contextual summary for adults.
-- Kid Summary — simplified, engaging summary using age-appropriate language (requires fine-tuning).
-- Adult UI / Kid UI — presentation layers for consumers.
+### Single LLM Calls (4) — no tools, no agency, structured input/output
 
-## Notes & Scope
-- This design intentionally excludes infrastructure concerns (monitoring, auth, schedulers, vector DBs) to keep scope focused on the research pipeline and summarization.
-- The system preserves source HTML for auditing and provenance.
-- The Kid Summary requires a fine-tuning pipeline (not included in current scope) to ensure cultural relevance and safety.
+4. **Rhetoric Neutralizer (single LLM call)** — analyzes anonymized statements, extracts claims with source citations, classifies rhetorical devices. Has a hard constraint: **must never attempt to guess the politician's identity**. No agency needed — receives fixed input, produces structured output.
+5. **Judge (single LLM call)** — stateless, context-isolated bias screening layer. Uses a **different OpenAI model** than the Rhetoric Neutralizer (same company, different model). Evaluates 4 criteria:
+   - Criterion 0: Identity Inference Prohibition (HARD CONSTRAINT)
+   - Criterion 1: Grounding Violation
+   - Criterion 2: Tonal Bias
+   - Criterion 3: Unsupported Inference
+   - Returns structured JSON verdict with `pass`/`fail` + `revision_instructions`
+   - Retry logic: max 2 retries on soft fail (sends feedback to Rhetoric Neutralizer), identity inference fail routes back to Redactor for stronger anonymization, retries exhausted → quarantine (confidence: low)
+   - **The Judge never sees the real politician name and never sees graph state (retry count, etc.)** — this isolation is what makes it an unbiased evaluator
+6. **Research Writer (single LLM call)** — compiles research notes, cross-references sources. No agency needed — receives all data, produces structured notes.
+7. **Presentation LLM (single LLM call)** — condenses research notes into user-facing output. No agency needed.
 
-## Next Steps (suggested)
-- Add a minimal Python fetcher and queue prototype to demonstrate end-to-end flow.
-- Wire a basic Supervisor that saves HTML to `/data/` and passes it to a summarizer stub.
-- Create simple static pages for Adult UI and Kid UI to display outputs.
+### Pure Code Steps (3) — no LLM involved at all
+
+8. **Redactor (pure code)** — NER-based name removal, title/committee stripping, replaces with "Legislator A/B/C" to anonymize before rhetoric analysis. Deterministic, no LLM.
+9. **Vector DB Write (pure code)** — publishes embeddings from Research Writer output to Vector DB. Deterministic, no LLM.
+10. **Citation Validation (pure code)** — Layer 5 of debiasing strategy. Checks whether quoted text actually exists in source documents. Deterministic, no LLM.
+
+### Downstream Consumer
+
+11. **RAG Chatbot** — downstream consumer of Vector DB, separate from the pipeline.
+
+## Bias/Debiasing Strategy (Layered Defense in Depth)
+
+Based on research papers discussed:
+
+- **Layer 1 (Input):** Entity anonymization — strip politician names before the Rhetoric Neutralizer sees them
+- **Layer 2 (LLM call design):** Structured output with mandatory source citations
+- **Layer 3 (Intra-call):** Self-debiasing via reprompting (two-pass) — based on Gallegos et al., 2024 (arXiv:2402.01981)
+- **Layer 4 (Post-call):** LLM-as-Judge bias screen — based on Phute et al., 2023 (arXiv:2308.07308)
+- **Layer 5 (Programmatic):** Citation validation — code checks whether quoted text exists in source
+
+## Source Reliability Tool (Design Phase)
+
+A tool inside Agent 1 that ensures only **trustworthy, authoritative sources** pass through (not just HTTP status checks). Cannot be fully deterministic because municipal government URLs vary by city (e.g., `brampton.ca`, `council.nyc.gov`, Legistar portals, etc.).
+
+**Two-layer design:**
+
+- **Layer 1: Domain Heuristic Check (deterministic code)** — pass `.gov`/`.gc.ca`/known legislative platforms (Legistar, eScribe, Granicus), fail social media/blogs/opinion sites, uncertain goes to Layer 2
+- **Layer 2: LLM Source Evaluation (single LLM call, not agent)** — for uncertain URLs only, classifies as `official`, `likely_official`, `news`, `unreliable`, or `unknown`. Only `official` and `likely_official` pass.
+
+This is a **tool inside Agent 1** (not a separate graph node) so the agent can self-correct and search again if too many links are filtered out.
+
+**Open question:** How to treat news articles (CBC, local newspapers) — undecided on whether to allow them as secondary sources or exclude entirely. This needs to be resolved before implementation.
+
+## Discoveries
+
+- LLMs **can** detect rhetoric and bias effectively when given the task explicitly — the key is architectural isolation (anonymization, structured output, dedicated evaluation criteria)
+- The LLM-as-Judge paper (Phute et al.) explicitly specifies the judge should be a **single LLM call, not an agent** — no tools, no memory, no iterative output generation. Its effectiveness comes from its narrow, isolated scope.
+- Keeping the Judge stateless (no access to retry count or graph state) prevents it from reasoning about consequences of its verdict, which would introduce bias
+- The `langgraph-supervisor` package was removed from requirements as it's no longer needed
+- The codebase was initially broken scaffolding from ChatGPT — `llm` and `tools` were undefined in `agent.py`, `supervisor` was undefined in `main.py`
+- LangGraph version is 1.0.10, langchain-openai is 1.1.11
+- `create_react_agent` uses `model=` parameter (not `llm=`) in current LangGraph version
+- Agent 2 (Scraper Builder) must remain a ReAct agent because it generates scraping code for arbitrary, unpredictable URLs — a debugging tool is needed so the system doesn't break when LLM-generated code fails against unfamiliar HTML structures
+
+## Accomplished
+
+### Completed
+- Architectural decision: sequential pipeline, no supervisor, no planner
+- Full pipeline design — 3 ReAct agents, 4 single LLM calls, 3 pure code steps
+- Reclassification: stripped agency from components that don't make real decisions (Rhetoric Neutralizer, Research Writer became single LLM calls; Citation Validation, Vector DB write became pure code)
+- Debiasing strategy designed (5 layers)
+- Judge design specified (4 criteria, structured output schema, retry logic, isolation constraints)
+- Mermaid diagram updated in `diagrams/ai-politician-accountability.mmd` — clean, engineering-focused, no excessive styling
+- `requirements.txt` updated (removed `langgraph-supervisor`, added `python-dotenv`)
+- `utils/tools.py` implemented with stub tools for Agent 1 and Agent 2
+- `utils/agent.py` rewritten with factory functions `build_agent_1(llm)` and `build_agent_2(llm)`
+- `main.py` rewritten with LangGraph `StateGraph` — linear chain of Agent 1 → Agent 2, compiles and runs successfully
+- Source reliability tool designed (two-layer: domain heuristic + LLM evaluation)
+
+### In Progress
+- Source reliability tool implementation — design is done, needs to be built as a tool inside Agent 1
+- Decision needed on news article policy (allow as secondary source vs. exclude)
+
+### Not Started
+- Agent 3 (Politician Position Finder) — not built
+- Redactor (pure code, NER-based) — not built
+- Rhetoric Neutralizer (single LLM call) — not built
+- Judge (single LLM call) — not built
+- Research Writer (single LLM call) — not built
+- Presentation LLM (single LLM call) — not built
+- Vector DB integration (pure code) — not built
+- Citation Validation (pure code) — not built
+- RAG Chatbot — not built
+- OpenNorth API integration — not built
+- Real tool implementations (replace stubs with actual web search, scraping, etc.)
+- Tavily integration for Agent 1's web search
+- Debugging tool for Agent 2 — not built
