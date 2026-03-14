@@ -8,12 +8,12 @@ import os
 import json
 from typing import Annotated
 
+import requests
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt.tool_node import InjectedState
 from langgraph.types import Command
-from tavily import TavilyClient
 
 from utils.prompts import (
     reliability_org_extraction_prompt,
@@ -27,53 +27,67 @@ mini_model = ChatOpenAI(
     model="gpt-5-mini", temperature=0.0, max_tokens=1500, timeout=30
 )
 
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-
 
 @tool
 def web_search(query: str, max_results: int = 5) -> Command | str:
     """Search the web for legislation related to a specific municipality or topic.
 
-    Uses the Tavily search API to find recent, relevant legislation pages.
+    Uses the SerpApi to find recent, relevant legislation pages.
 
     Args:
         query: The search query — e.g. "recent Austin city council bylaws 2026".
         max_results: Maximum number of results to return (default 5).
 
     Returns:
-        A formatted string with search results including titles, URLs, and content snippets.
+        A Command object that updates the state with search results.
     """
-    try:
-        response = tavily_client.search(
-            query=query,
-            max_results=max_results,
-            search_depth="advanced",
-            include_answer=False,
-            include_raw_content=True,
+    serp_api_key = os.getenv("SERP_API_KEY")
+
+    if not serp_api_key:
+        return Command(
+            update={
+                "raw_legislation_sources": [
+                    "Error: SERP_API_KEY not configured. Please set your SERP_API_KEY environment variable."
+                ]
+            }
         )
 
-        if not response.get("results"):
-            raise  Exception(f"No results found for query: {query}")
+    try:
+        response = requests.get(
+            "https://serpapi.com/search",
+            params={
+                "q": query,
+                "num": max_results,
+                "api_key": serp_api_key,
+                "engine": "google",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
 
-        sorted_results = sorted(
-            response.get("results", []),
-            key=lambda x: x.get("score", 0.0),
-            reverse=True,
-        )[:5]
+        results = data.get("organic_results", [])
+
+        if not results:
+            return Command(
+                update={
+                    "raw_legislation_sources": [f"No results found for query: {query}"]
+                }
+            )
 
         new_formatted_results = []
-        for result in sorted_results:
+        for result in results[:max_results]:
             new_formatted_results.append(
                 f"Title: {result.get('title', 'N/A')}\n"
-                f"URL: {result.get('url', 'N/A')}\n"
-                f"Content: {result.get('content', 'N/A')[:500]}\n"
-                f"Score: {result.get('score', 0.0)}\n"
+                f"URL: {result.get('link', 'N/A')}\n"
+                f"Content: {result.get('snippet', 'N/A')[:500]}\n"
+                f"Score: {result.get('position', 0)}\n"
             )
 
         return Command(update={"raw_legislation_sources": new_formatted_results})
 
     except Exception as e:
-        return f"Error:{e}"
+        return Command(update={"raw_legislation_sources": [f"Error: {str(e)}"]})
 
 
 @tool
@@ -118,7 +132,6 @@ def reliability_analysis(
     try:
         org_extractions = json.loads(extraction_response.content)
     except (json.JSONDecodeError, TypeError):
-        # If extraction fails, pass all sources through as unknown
         return Command(
             update={
                 "raw_legislation_sources": [],
@@ -126,7 +139,6 @@ def reliability_analysis(
             }
         )
 
-    # Step 2: Look up each organization on Wikidata
     sources_with_context = []
     for item in org_extractions:
         url = item.get("url", "Unknown URL")
@@ -146,7 +158,6 @@ def reliability_analysis(
             }
         )
 
-    # Step 3: Make reliability judgment via LLM using Wikidata context
     context_text = json.dumps(sources_with_context, indent=2, default=str)
     judgment_prompt = reliability_judgment_prompt.format(
         sources_with_context=context_text
@@ -162,7 +173,6 @@ def reliability_analysis(
     try:
         judgments = json.loads(judgment_response.content)
     except (json.JSONDecodeError, TypeError):
-        # If judgment fails, pass all sources through
         return Command(
             update={
                 "raw_legislation_sources": [],
@@ -170,7 +180,6 @@ def reliability_analysis(
             }
         )
 
-    # Step 4: Filter accepted sources — match back to raw_legislation_sources
     accepted_urls = {j["url"] for j in judgments if j.get("accepted", False)}
 
     reliable_sources = []
