@@ -27,3 +27,10 @@ class IndividualReliabilityAnalysis(BaseModel):
     rationale: str = Field(
         description="Explain your choice for the scoring in 250 characters or less"
     )
+
+class WriterOutput(BaseModel):
+    """Structured reflection output produced by the reflection tool."""
+
+    title: str = Field(description="Title of the written content")
+    body: str = Field(description="Main written content")
+    summary: str = Field(description="Brief summary of the content")
