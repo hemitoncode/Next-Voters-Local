@@ -53,7 +53,7 @@ def web_search(query: str, max_results: int = 5) -> Command | str:
         )
 
         if not response.get("results"):
-            return f"No results found for query: {query}"
+            raise  Exception(f"No results found for query: {query}")
 
         sorted_results = sorted(
             response.get("results", []),
