@@ -38,9 +38,23 @@ class LegislationContent(TypedDict):
     content: str
     error: NotRequired[str]
 
+class IndividualStatementSummary(TypedDict):
+    """The information about a statement made by a politician for a specific legislative source. Summary must be short (2-3 sentences MAX)"""
+    source: str
+    summary: str
+
+class PoliticianStatementSummary(TypedDict):
+    """The information about a politician that is dealing with legislation explored."""
+    name: str
+    statement_summaries: list[IndividualStatementSummary]
+
 
 class ChainData(TypedDict):
+    """Data sent through the chain of AI components."""
     city: NotRequired[str]
     legislation_sources: NotRequired[str]
     legislation_content: NotRequired[list[LegislationContent]]
-    final_output: NotRequired[WriterOutput]
+    notes: NotRequired[str]
+    politician_public_statements: NotRequired[list[PoliticianStatementSummary]]
+    legislation_summary: NotRequired[WriterOutput]
+    markdown_report: NotRequired[str]
