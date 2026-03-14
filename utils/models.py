@@ -1,4 +1,4 @@
-"""Shared Pydantic models used across agents and tools."""
+"""Shared Pydantic models used to structure LLM responses."""
 
 from pydantic import BaseModel, Field
 
@@ -35,7 +35,7 @@ class WriterOutput(BaseModel):
         description="Title of the written content"
     )
     body: str = Field(
-        description="Main written content"
+        description="Main written content. They should be in bullet-point format."
     )
     summary: str = Field(
         description="Brief summary of the content"
