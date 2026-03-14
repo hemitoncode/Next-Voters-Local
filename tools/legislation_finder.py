@@ -102,7 +102,6 @@ def reliability_analysis(
             }
         )
 
-    # Step 1: Extract parent organizations from source URLs via LLM
     sources_text = "\n---\n".join(raw_legislation_sources)
     extraction_prompt = reliability_org_extraction_prompt.format(sources=sources_text)
 
