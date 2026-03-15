@@ -6,14 +6,15 @@ All tools return Command objects to update LangGraph state.
 
 import os
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 import requests
 from dotenv import load_dotenv
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt.tool_node import InjectedState
-from langgraph.types import Command
+from langgraph.types import Command, InjectedToolCallId
 
 from utils.prompts import reliability_judgment_prompt
 from utils.wikidata_client import search_entity, get_org_classification
@@ -21,18 +22,23 @@ from utils.wikidata_client import search_entity, get_org_classification
 
 load_dotenv()
 mini_model = ChatOpenAI(
-    model="gpt-5-mini", temperature=0.0, max_tokens=1500, timeout=30
+    model="gpt-4o-mini", temperature=0.0, max_tokens=1500, timeout=30
 )
 
 
 @tool
-def web_search(query: str, max_results: int = 5) -> Command | str:
+def web_search(
+    query: str,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    max_results: int = 5,
+) -> Command:
     """Search the web for legislation related to a specific municipality or topic.
 
     Uses the SerpApi to find recent, relevant legislation pages.
 
     Args:
         query: The search query — e.g. "recent Austin city council bylaws 2026".
+        tool_call_id: Injected by LangGraph — used to associate the ToolMessage.
         max_results: Maximum number of results to return (default 5).
 
     Returns:
@@ -68,16 +74,40 @@ def web_search(query: str, max_results: int = 5) -> Command | str:
                 }
             )
 
+        summary = (
+            f"Web search for '{query}' returned {len(raw_legislation_sources)} result(s):\n"
+            + "\n".join(
+                f"  - {s['organization']}: {s['url']}"
+                for s in raw_legislation_sources
+            )
+        )
+
         return Command(
-            update={"raw_legislation_sources": raw_legislation_sources}
+            update={
+                "raw_legislation_sources": raw_legislation_sources,
+                "messages": [
+                    ToolMessage(
+                        content=(summary),
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
         )
 
     except Exception as e:
-        return f"Error: ${e}"
+        error_msg = f"Web search failed: {e}"
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                ],
+            }
+        )
 
 
 @tool
 def reliability_analysis(
+    tool_call_id: Annotated[str, InjectedToolCallId],
     raw_legislation_sources: Annotated[
         list[dict[str, Any]], InjectedState("raw_legislation_sources")
     ],
@@ -90,6 +120,10 @@ def reliability_analysis(
     3. Make a reliability judgment using the Wikidata context (LLM call).
     4. Promote accepted sources to reliable_legislation_sources.
 
+    Args:
+        tool_call_id: Injected by LangGraph — used to associate the ToolMessage.
+        raw_legislation_sources: Injected from state — sources to evaluate.
+
     Returns:
         A Command that updates reliable_legislation_sources with accepted sources
         and clears raw_legislation_sources.
@@ -99,6 +133,12 @@ def reliability_analysis(
             update={
                 "raw_legislation_sources": [],
                 "reliable_legislation_sources": [],
+                "messages": [
+                    ToolMessage(
+                        content="Reliability analysis skipped: no raw sources to evaluate.",
+                        tool_call_id=tool_call_id,
+                    )
+                ],
             }
         )
 
@@ -131,25 +171,58 @@ def reliability_analysis(
     judgment_response = mini_model.invoke(
         [
             {"role": "system", "content": judgment_prompt},
-            {"role": "user", "content": "Judge the reliability of each source based off of the context from Wikidata."},
+            {
+                "role": "user",
+                "content": "Judge the reliability of each source based off of the context from Wikidata.",
+            },
         ]
     )
 
     try:
         judgments = json.loads(judgment_response.content)
     except (json.JSONDecodeError, TypeError):
+        # Fallback: accept all sources if judgment parsing fails
+        summary = (
+            f"Reliability analysis could not parse LLM judgments. "
+            f"Falling back to accepting all {len(raw_legislation_sources)} source(s)."
+        )
         return Command(
             update={
                 "raw_legislation_sources": [],
                 "reliable_legislation_sources": raw_legislation_sources,
+                "messages": [
+                    ToolMessage(content=summary, tool_call_id=tool_call_id)
+                ],
             }
         )
 
-    reliable_sources = {j["url"] for j in judgments if j.get("accepted", False)}
+    accepted = [j for j in judgments if j.get("accepted", False)]
+    rejected = [j for j in judgments if not j.get("accepted", False)]
+    reliable_sources = [j["url"] for j in accepted]
+
+    summary_lines = [
+        f"Reliability analysis complete. {len(accepted)} accepted, {len(rejected)} rejected.",
+        "",
+        "Accepted sources:"
+        if accepted
+        else "No sources accepted.",
+    ]
+    for j in accepted:
+        summary_lines.append(f"  ✓ {j['url']} — {j.get('reason', 'No reason given')}")
+    if rejected:
+        summary_lines.append("Rejected sources:")
+        for j in rejected:
+            summary_lines.append(f"  ✗ {j['url']} — {j.get('reason', 'No reason given')}")
 
     return Command(
         update={
             "raw_legislation_sources": [],
             "reliable_legislation_sources": reliable_sources,
+            "messages": [
+                ToolMessage(
+                    content="\n".join(summary_lines),
+                    tool_call_id=tool_call_id,
+                )
+            ],
         }
     )
