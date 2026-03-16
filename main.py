@@ -151,6 +151,7 @@ def report_formatter(inputs: ChainData) -> ChainData:
         "---",
         "",
         "## Politician Public Statements",
+        "### Coming Soon!"
         "",
     ]
 
