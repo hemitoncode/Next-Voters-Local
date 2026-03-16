@@ -26,6 +26,18 @@ mini_model = ChatOpenAI(
 )
 
 
+def _extract_json(text: str) -> str:
+    """Strip markdown code fences from LLM output before parsing."""
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
 @tool
 def web_search(
     query: str,
@@ -105,6 +117,7 @@ def web_search(
 @tool
 def reliability_analysis(
     tool_call_id: Annotated[str, InjectedToolCallId],
+    city: Annotated[str, InjectedState("city")],
     raw_legislation_sources: Annotated[
         list[dict[str, Any]], InjectedState("raw_legislation_sources")
     ],
@@ -119,6 +132,7 @@ def reliability_analysis(
 
     Args:
         tool_call_id: Injected by LangGraph — used to associate the ToolMessage.
+        city: The city to find legislation for (injected from state).
         raw_legislation_sources: Injected from state — sources to evaluate.
 
     Returns:
@@ -162,7 +176,7 @@ def reliability_analysis(
 
     context_text = json.dumps(sources_with_context, indent=2, default=str)
     judgment_prompt = reliability_judgment_prompt.format(
-        sources_with_context=context_text
+        input_city=city, sources_with_context=context_text
     )
 
     judgment_response = mini_model.invoke(
@@ -176,17 +190,20 @@ def reliability_analysis(
     )
 
     try:
-        judgments = json.loads(judgment_response.content)
-    except (json.JSONDecodeError, TypeError):
-        # Fallback: accept all sources if judgment parsing fails
+        cleaned_content = _extract_json(judgment_response.content)
+        judgments = json.loads(cleaned_content)
+    except (json.JSONDecodeError, TypeError) as e:
+        # Safe fallback: reject all sources if judgment parsing fails (can't verify reliability)
+        print(f"[DEBUG] JSON parse error: {e}")
+        print(f"[DEBUG] Raw response: {judgment_response.content[:500]}...")
         summary = (
             f"Reliability analysis could not parse LLM judgments. "
-            f"Falling back to accepting all {len(raw_legislation_sources)} source(s)."
+            f"Falling back to rejecting all {len(raw_legislation_sources)} source(s)."
         )
         return Command(
             update={
                 "raw_legislation_sources": [],
-                "reliable_legislation_sources": raw_legislation_sources,
+                "reliable_legislation_sources": [],
                 "messages": [ToolMessage(content=summary, tool_call_id=tool_call_id)],
             }
         )
