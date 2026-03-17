@@ -9,4 +9,4 @@ else
     PYTHON="python3"
 fi
 
-exec "$PYTHON" -m cli.main "$@"
+exec "$PYTHON" -m cli.run_cli_main "$@"
