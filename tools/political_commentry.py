@@ -185,3 +185,9 @@ async def search_political_commentary(
                 "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
             }
         )
+
+@tool
+def retrieve_commentary_content(
+    commentry_sources: Annotated[str, InjectedState("commentry_sources")],
+):
+    pass
