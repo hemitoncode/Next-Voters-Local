@@ -11,7 +11,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from langgraph.types import Command
 
 from utils.schemas import ReflectionEntry
-from utils.prompts import reflection_prompt
+from config.prompts import reflection_prompt
 
 load_dotenv()
 
