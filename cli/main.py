@@ -4,11 +4,12 @@ from rich.markdown import Markdown
 from rich import box
 
 from pipelines.nv_local import chain
-from utils.cli_helpers import show_welcome, LOG
+from utils.cli_helpers import show_welcome
 
 console = Console()
 
-if __name__ == "__main__":
+
+def main():
     show_welcome()
 
     city = input("\n➜ Enter city name: ")
@@ -28,3 +29,7 @@ if __name__ == "__main__":
     )
     console.print()
     console.print(Markdown(report))
+
+
+if __name__ == "__main__":
+    main()
