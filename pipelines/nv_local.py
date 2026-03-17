@@ -23,6 +23,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 
 from agents.legislation_finder import legislation_finder_agent
+from agents.political_commentry import political_commentry_agent
 
 from utils.schemas import WriterOutput, ChainData
 from config.system_prompts import writer_sys_prompt, note_taker_sys_prompt
@@ -115,9 +116,14 @@ def research_summary_writer(inputs: ChainData) -> ChainData:
     return {**inputs, "legislation_summary": ai_generated_summary}
 
 
-def run_politician_public_statement(inputs: ChainData) -> ChainData:
-    """Run the politican public statement finder agent as a node."""
-    return {**inputs, "politician_public_statements": []}
+def run_politician_commentry_finder(inputs: ChainData) -> ChainData:
+    """Run the legislation finder agent as a node."""
+
+    agent_result = political_commentry_agent.invoke({"city": city})
+
+    legislation_sources = agent_result.get("reliable_legislation_sources", [])
+
+    return {**inputs, "legislation_sources": legislation_sources}
 
 
 def report_formatter(inputs: ChainData) -> ChainData:
@@ -168,7 +174,7 @@ chain = (
     | RunnableLambda(run_content_retrieval)
     | RunnableLambda(research_note_taker)
     | RunnableLambda(research_summary_writer)
-    | RunnableLambda(run_politician_public_statement)
+    | RunnableLambda(run_politician_commentry_finder)
     | RunnableLambda(report_formatter)
 )
 
