@@ -11,6 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV NV_CITY="Austin"
+ENV NV_CITIES="Toronto,New York City,San Diego"
 
-CMD ["python", "main.py"]
+CMD ["python", "runners/run_container_job.py"]
