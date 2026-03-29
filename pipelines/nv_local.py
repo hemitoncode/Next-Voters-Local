@@ -6,23 +6,25 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from utils.supabase_client import get_supported_cities_from_db
 from pipelines.node.content_retrieval import content_retrieval_chain
-from pipelines.node.email_sender import send_email_to_subscribers
+from pipelines.node.email_sender import email_sender_chain
 from pipelines.node.legislation_finder import legislation_finder_chain
 from pipelines.node.note_taker import note_taker_chain
 from pipelines.node.politician_commentary import politician_commentary_chain
 from pipelines.node.report_formatter import report_formatter_chain
 from pipelines.node.summary_writer import summary_writer_chain
-from data import SUPPORTED_CITIES
 
+# Pipeline chain without email_sender (email dispatch happens separately)
 chain = (
     legislation_finder_chain
     | content_retrieval_chain
-    | note_taker_chain
-    | summary_writer_chain
+    | note_taker_chain.with_retry()
+    | summary_writer_chain.with_retry()
     | politician_commentary_chain
     | report_formatter_chain
-    | send_email_to_subscribers
+    # Note: email_sender_chain is removed from the main pipeline
+    # Email dispatch now happens in a separate batch operation via email_dispatcher.py
 )
 
 
@@ -32,19 +34,20 @@ def run_pipeline(city: str) -> dict[str, Any]:
     return chain.invoke({"city": city})
 
 
-def run_markdown_report(city: str) -> str:
-    """Return the markdown report produced by the pipeline."""
-
-    return run_pipeline(city).get("markdown_report", "")
-
-
 def main() -> None:
-    """CLI entry point that runs the pipeline for one city."""
+    """Entry point that runs the pipeline for one city."""
+
+    # Get supported cities from Supabase
+    try:
+        cities = get_supported_cities_from_db()
+    except Exception as e:
+        print(f"Error: Failed to get supported cities from Supabase: {e}")
+        raise
 
     parser = argparse.ArgumentParser(description="Run the NV Local research pipeline.")
     parser.add_argument(
         "city",
-        choices=SUPPORTED_CITIES,
+        choices=cities,
         help="City to run the NV Local pipeline for.",
     )
     parser.add_argument(
@@ -62,7 +65,8 @@ def main() -> None:
 
     args = parser.parse_args()
     print(f"Running NV Local pipeline for {args.city}...")
-    report = run_markdown_report(args.city)
+    result = run_pipeline(args.city)
+    report = result.get("markdown_report", "")
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +74,3 @@ def main() -> None:
 
     if not args.quiet:
         print(report)
-
-
-if __name__ == "__main__":
-    main()
