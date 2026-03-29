@@ -7,7 +7,7 @@ to enable isolated unit testing of components.
 from __future__ import annotations
 
 import json
-from typing import Any, Generator, Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
