@@ -5,7 +5,7 @@
   <p>AI agents that research municipal legislation so you don't have to.</p>
   <p>
     <a href="https://github.com/Next-Voters/Local/stargazers"><img src="https://img.shields.io/github/stars/Next-Voters/Local" alt="Stars" /></a>
-    <a href="https://github.com/Next-Voters/Local/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Next-Voters/Local" alt="License" /></a>
+    <a href="https://github.com/Next-Voters/Local/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
     <a href="https://github.com/Next-Voters/Local/issues"><img src="https://img.shields.io/github/issues/Next-Voters/Local" alt="Issues" /></a>
   </p>
 </div>
