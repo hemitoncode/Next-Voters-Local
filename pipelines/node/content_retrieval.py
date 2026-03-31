@@ -25,6 +25,9 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
     if not urls:
         return {**inputs, "legislation_content": []}
 
+    # Tavily API has a hard limit of 20 URLs per extraction request
+    urls = urls[:20]
+
     url_to_content: dict[str, str] = {}
     try:
         url_to_content = run_async(lambda: extract_url_content(urls))

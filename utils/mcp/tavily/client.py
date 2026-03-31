@@ -127,13 +127,18 @@ def extract_search_results(raw_results: dict[str, Any]) -> list[dict[str, str]]:
 async def extract_url_content(urls: list[str]) -> dict[str, str]:
     """Batch-extract page content for URLs using Tavily SDK.
 
+o    Tavily API limits extraction to 20 URLs per request. Only the first 20 URLs are processed.
+
     Returns: dict mapping URL to extracted content (markdown format).
     """
     if not urls:
         return {}
 
+    # Tavily API has a hard limit of 20 URLs per extraction request
+    urls_to_extract = urls[:20]
+
     client = AsyncTavilyClient(api_key=get_api_key())
-    response = await client.extract(urls=urls, format="markdown")
+    response = await client.extract(urls=urls_to_extract, format="markdown")
 
     return {
         item["url"]: item["raw_content"]
