@@ -63,8 +63,10 @@ The pipeline is a **fixed, deterministic sequence** of nodes composed via LangGr
 
 ```
 legislation_finder → content_retrieval → note_taker → summary_writer
-  → politician_commentary → report_formatter → [email_sender (optional)]
+  → politician_commentary → report_formatter
 ```
+
+Email dispatch is **decoupled from the pipeline** — it runs as a post-pipeline batch operation in the container runner after all (city, topic) pipelines complete. Reports are cached via `report_cache`, optionally translated via DeepL, then dispatched to subscribers filtered by their topic preferences.
 
 **Key design**: Each node is a thin `RunnableSequence` that transforms pipeline state (`ChainData` TypedDict).
 
@@ -77,22 +79,28 @@ legislation_finder → content_retrieval → note_taker → summary_writer
 
 **Pipeline Nodes** (`pipelines/node/`):
 - `legislation_finder.py`: Calls the ReAct agent, returns filtered URLs
-- `content_retrieval.py`: Fetches page content via markdown.new service
+- `content_retrieval.py`: Fetches page content via Tavily Extract (with `markdown.new` fallback)
 - `note_taker.py`: Compresses raw content into dense notes (single LLM call)
 - `summary_writer.py`: Structured extraction of key legislative details (schema: `WriterOutput`)
-- `politician_commentary.py`: Calls ReAct agent for political context
+- `politician_commentary.py`: Calls ReAct agent for political context; passes `topic` and `research_notes` for focused research; forwards `social_media_posts` through pipeline state
 - `report_formatter.py`: Builds final markdown document
-- `email_dispatcher.py`: Async batch email delivery to Supabase subscribers
+- `email_dispatcher.py`: Post-pipeline batch email delivery — queries subscribers' topic preferences via `subscription_topics` junction table, builds per-subscriber content from matching topics, includes DeepL translations (Spanish/French) if available, sends in waves of 100 with rate limiting
+- `email_sender.py`: Legacy per-pipeline email node (uses shared `SMTPConnectionPool` from `utils/email.py`)
 
 **Utilities** (`utils/`):
 - `llm/`: LLM factory (`get_llm()`, `get_structured_llm()`) with default config (gpt-5, temp=0, max_tokens=16384)
 - `schemas/`:
-  - `state.py`: `ChainData` TypedDict (pipeline state contract)
+  - `state.py`: `ChainData` TypedDict (pipeline state contract); includes `social_media_posts` field for Twitter/X posts collected by the political commentary agent. Also defines `SocialMediaPost` TypedDict (politician, platform, text, tweet_id, created_at, engagement).
   - `pydantic.py`: Structured output schemas (e.g., `WriterOutput`)
 - `mcp/`: Per-service MCP (Model Context Protocol) client + server pairs for Tavily search/extraction, Wikidata reliability analysis, and political figure discovery. Each service lives in its own subdirectory (`tavily/`, `wikidata/`, `political_figures/`) with a `client.py` and `server.py`. Agents call `client.py` functions; `server.py` runs as a FastMCP subprocess via stdio transport. `session.py` provides `MCPSessionManager` for reusing subprocesses across tool calls within one agent invocation (avoids spawning a new process per tool call).
 - `report_cache.py`: Module-level in-memory cache for city+topic pipeline reports. Stores reports incrementally as each pipeline thread completes via `store(city, topic, report)`. Other components retrieve reports via `get(city, topic)`, `get_for_city(city)`, `get_all()`, or `build_from_results(results)`. The cache is keyed as `{city: {topic: report}}`. The module itself acts as a singleton — import `from utils import report_cache` from anywhere.
+- `email.py`: Consolidated email utilities — `SMTPConnectionPool` (thread-safe, context manager, NOOP health checks for stale connections), `is_email_configured()`, `load_template()`, `convert_markdown_to_html()`, `build_translation_html()`, `render_template()`, `create_mime_message()`, `send_single_email()`. Single source of truth for all SMTP and email rendering logic.
+- `report_translator.py`: Translates all cached pipeline reports to Spanish (ES) and French (FR) concurrently via the DeepL SDK (`deepl` Python package). Optional — gracefully skipped if `DEEPL_API_KEY` is not set.
 - `context_compressor.py`: LLMLingua-2 wrapper (`compress_text()`) that semantically compresses raw page content before it enters pipeline state, preventing context overflow on large cities.
 - `supabase_client.py`: Loads supported cities and topics from Supabase, manages subscriptions with topic preferences via the `subscription_topics` junction table
+
+**Templates** (`templates/`):
+- `email_report.html`: Branded HTML email template with `{{CONTENT}}` and `{{TRANSLATIONS}}` placeholders, responsive design, dark theme with red accent (#E63946), `{{UNSUBSCRIBE_URL}}` footer link
 
 **Configuration** (`config/`):
 - `system_prompts/`: Prompt templates for agents and nodes
@@ -105,8 +113,9 @@ legislation_finder → content_retrieval → note_taker → summary_writer
 2. **Content Retrieval**: Fetches each URL's text via Tavily Extract (with `markdown.new` as fallback); each block is then compressed by LLMLingua-2 before being stored → list of compressed text blocks
 3. **Note Taker**: LLM summarizes all blocks into dense notes
 4. **Summary Writer**: LLM extracts structured data (title, category, impact, etc.) → `WriterOutput`
-5. **Politician Commentary**: Agent discovers officials via Political Figures MCP, searches statements via Tavily MCP, and searches Twitter via tweepy → politician public statements
+5. **Politician Commentary**: Agent discovers officials via Political Figures MCP, searches statements via Tavily MCP, and searches Twitter via tweepy → politician public statements + social media posts (forwarded via `social_media_posts` in pipeline state). Receives `topic` and `research_notes` from upstream for focused research.
 6. **Report Formatter**: Combines all outputs into markdown for display/email
+7. **Post-pipeline** (container runner only): Reports are translated to Spanish and French via the DeepL SDK, then dispatched to subscribers filtered by their topic preferences
 
 ### Key Design Decisions
 
@@ -152,6 +161,25 @@ legislation_finder → content_retrieval → note_taker → summary_writer
 - Empty/falsy reports are silently skipped by `store()`, matching the previous filtering behavior
 - Cache is cleared between runs via `clear()` or `build_from_results()`
 
+**Decoupled email dispatch with topic filtering**
+- Email sending was removed from the pipeline chain; it now runs as a post-pipeline batch operation in `runners/run_container_job.py`
+- After all (city, topic) pipelines complete, `report_cache.get_all()` provides all reports, which are translated via `report_translator.translate_all_reports()` then dispatched via `email_dispatcher.dispatch_emails_to_subscribers()`
+- Each subscriber receives only reports matching their topic preferences (queried from `subscription_topics` junction table in Supabase)
+- Emails are sent in waves of 100 with 1-second delays to avoid SMTP rate limiting
+
+**Thread-safe SMTP connection pool (`utils/email.py`)**
+- `SMTPConnectionPool` manages a `queue.Queue` of reusable SMTP connections with configurable pool size (default 10)
+- `get_connection()` validates connections with SMTP NOOP before returning; stale/dead connections are discarded and replaced
+- Supports context manager protocol (`with pool:`) for automatic cleanup
+- `close_all()` uses a direct `get_nowait()` loop (fixed TOCTOU race from earlier `while not empty()` pattern)
+- All email sending code imports from `utils/email.py` as the single source of truth
+
+**Multilingual reports via DeepL SDK**
+- Reports are optionally translated to Spanish (ES) and French (FR) via the `deepl` Python SDK (direct API calls, not MCP)
+- `utils/report_translator.py` translates all cached reports concurrently via `asyncio.gather()`
+- Translations are included as styled HTML sections in subscriber emails via `build_translation_html()` and the `{{TRANSLATIONS}}` template placeholder
+- Gracefully skipped if `DEEPL_API_KEY` is not set (free tier: 500K chars/month)
+
 **Concurrency model**
 - `runners/run_container_job.py` uses `ThreadPoolExecutor` for multi-city, multi-topic runs
 - One (city, topic) pair per thread; no shared state between pipeline instances (safe for concurrent execution)
@@ -175,7 +203,8 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 **Optional**:
 - `TWITTER_BEARER_TOKEN`: Twitter/X search via tweepy SDK in Political Figures MCP server (bearer token only; v2 API does not use `TWITTER_API_KEY`)
 - `SUPABASE_URL`, `SUPABASE_KEY`: Load supported cities + email subscribers
-- `SMTP_EMAIL`, `SMTP_APP_PASSWORD`: Send reports via SMTP
+- `SMTP_EMAIL`, `SMTP_APP_PASSWORD`: Send reports via SMTP (defaults: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`)
+- `DEEPL_API_KEY`: DeepL API for translating reports to Spanish/French (free tier: 500K chars/month at https://www.deepl.com/pro-api)
 
 **External APIs** (no env needed, service-to-service):
 - Wikidata REST + SPARQL (source reliability checking via Wikidata MCP server)
@@ -204,7 +233,9 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 **Error Handling**
 - Classifier output parse failures → reject all sources (safe fallback)
 - Missing email env vars → skip email dispatch (silent skip, not error)
+- Missing `DEEPL_API_KEY` → skip translation (returns empty dict, emails sent without translations)
 - Per-city failures in multi-city runs are captured and logged; pipeline continues for other cities
+- SMTP connection failures are handled by the pool — stale connections replaced, delivery failures tracked in `utils/email_failures.json`
 
 ## Code Conventions
 
@@ -233,10 +264,10 @@ docker run -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... nv-local
 
 ## Important Known Issues / WIP
 
-- Political commentary schema still evolving; if agent returns non-empty data in unexpected shape, report formatting may fail
 - LLMLingua-2 downloads `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank` from HuggingFace on first run (~400MB); cold starts in containerized environments will be slow until the model is cached
 - Tavily Extract can fail on some domains (access restrictions, JS-heavy SPAs); `markdown.new` fallback handles most of these but is not 100% reliable
 - No persistent report storage by default (pipeline is stateless)
+- DeepL free tier has a 500K characters/month limit; high-volume multi-city runs may hit this cap
 
 ## Common Development Tasks
 
@@ -259,5 +290,5 @@ docker run -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... nv-local
 **Debugging a city pipeline failure**:
 1. Run single city: `python main.py <city_name>` (no -q flag to see output)
 2. Check error message in stdout/stderr
-3. Likely causes: missing env vars (`OPENAI_API_KEY`, `TAVILY_API_KEY`), Tavily Extract failure on a domain, MCP subprocess initialization error (check that project root is on `sys.path`), agent hitting `recursion_limit=25` before completing, LLMLingua-2 model download failing on cold start
+3. Likely causes: missing env vars (`OPENAI_API_KEY`, `TAVILY_API_KEY`), Tavily Extract failure on a domain, MCP subprocess initialization error (check that project root is on `sys.path`), agent hitting `recursion_limit=25` before completing, LLMLingua-2 model download failing on cold start, SMTP pool exhaustion (check `utils/email_failures.json`)
 4. Look at per-city result dict in `runners/run_container_job.py:main()` for error field
