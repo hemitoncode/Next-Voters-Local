@@ -23,7 +23,7 @@ warnings.filterwarnings(
 )
 
 from utils.supabase_client import get_supported_cities_from_db
-from global_data.build_city_reports_dict import build_city_reports_dict
+from utils import report_cache
 from pipelines.nv_local import run_pipeline
 from pipelines.node.email_dispatcher import dispatch_emails_to_subscribers
 
@@ -52,7 +52,9 @@ def run_pipeline_instances(
             target = futures[future]
 
             try:
-                results_by_target[target] = future.result()
+                result = future.result()
+                results_by_target[target] = result
+                report_cache.store(target, result.get("markdown_report", ""))
             except Exception as exc:  # noqa: BLE001
                 results_by_target[target] = {
                     "error": f"{type(exc).__name__}: {exc}",
@@ -139,9 +141,9 @@ def main() -> int:
     if not quiet:
         print(report)
 
-    # Build reports dictionary and dispatch emails
+    # Dispatch emails using cached reports
     try:
-        reports_by_city = build_city_reports_dict(results_by_city)
+        reports_by_city = report_cache.get_all()
         logger.info("Dispatching emails to subscribers...")
         dispatch_emails_to_subscribers(reports_by_city)
     except Exception as e:

@@ -159,7 +159,7 @@ def dispatch_emails_to_subscribers(
 
     Args:
         reports_by_city: Dictionary mapping city names to markdown reports
-                        Generated from build_city_reports_dict() in run_container_job.py
+                        Generated from report_cache.get_all() in utils/report_cache.py
                         Example: {"Toronto": "# Report...", "NYC": "# Report..."}
 
     Returns:
