@@ -37,10 +37,11 @@ def is_email_configured() -> bool:
 
 class SMTPConnectionPool:
     """Thread-safe connection pool for SMTP operations.
-    
+
     Manages a pool of SMTP connections for concurrent email sending.
     Connections are initialized on pool creation and reused across
-    concurrent operations.
+    concurrent operations. Supports context manager protocol for
+    automatic cleanup.
     """
 
     def __init__(
@@ -50,7 +51,7 @@ class SMTPConnectionPool:
         smtp_port: int | None = None,
     ):
         """Initialize SMTP connection pool.
-        
+
         Args:
             pool_size: Number of connections to maintain in the pool
             smtp_host: SMTP server hostname (defaults to environment or smtp.gmail.com)
@@ -66,10 +67,10 @@ class SMTPConnectionPool:
 
     def _create_connection(self) -> smtplib.SMTP:
         """Create a single SMTP connection.
-        
+
         Returns:
             Initialized SMTP connection
-            
+
         Raises:
             smtplib.SMTPException: If connection/authentication fails
         """
@@ -90,12 +91,12 @@ class SMTPConnectionPool:
 
     def _init_pool(self):
         """Initialize the connection pool with partial failure handling.
-        
+
         Attempts to create all pool connections. If some fail, continues with
         fewer connections to degrade gracefully. Logs all failures for debugging.
         """
         logger.info(f"Initializing SMTP connection pool (size={self.pool_size})")
-        
+
         for i in range(self.pool_size):
             try:
                 conn = self._create_connection()
@@ -108,7 +109,7 @@ class SMTPConnectionPool:
                 )
                 # Continue with partial pool instead of crashing
                 continue
-        
+
         if self._created_connections == 0:
             logger.error(
                 f"Failed to create any SMTP connections! Pool initialization failed completely."
@@ -116,7 +117,7 @@ class SMTPConnectionPool:
             raise RuntimeError(
                 "SMTP connection pool initialization failed: could not create any connections"
             )
-        
+
         if self._created_connections < self.pool_size:
             logger.warning(
                 f"SMTP pool partially initialized: {self._created_connections}/{self.pool_size} connections"
@@ -208,17 +209,17 @@ class SMTPConnectionPool:
 @lru_cache(maxsize=1)
 def load_template() -> str:
     """Load the email template from disk (cached after first load).
-    
+
     Returns:
         HTML email template string
-        
+
     Raises:
         FileNotFoundError: If template file not found
     """
     template_path = os.path.join(
         os.path.dirname(__file__), "..", "templates", "email_report.html"
     )
-    
+
     try:
         with open(template_path, "r") as f:
             return f.read()
@@ -229,22 +230,30 @@ def load_template() -> str:
 
 def convert_markdown_to_html(markdown_content: str) -> str:
     """Convert markdown content to HTML.
-    
+
     Args:
         markdown_content: Markdown text to convert
-        
+
     Returns:
         HTML representation of the markdown
     """
     return markdown.markdown(markdown_content)
 
 
+<<<<<<< fix/email-connection
+def render_template(html_content: str) -> str:
+    """Render the email template with HTML content.
+
+    Args:
+        html_content: HTML content to insert into template
+=======
 def build_translation_html(translations_html: dict[str, str]) -> str:
     """Build styled HTML blocks for translated report sections.
 
     Args:
         translations_html: Dict mapping language code to translated HTML content.
                            Expected keys: "ES" (Spanish), "FR" (French).
+>>>>>>> staging
 
     Returns:
         Combined HTML string with language-headed sections, or empty string.
@@ -311,13 +320,13 @@ def create_mime_message(
     html_body: str,
 ) -> MIMEText:
     """Create a MIME email message.
-    
+
     Args:
         from_email: Sender email address
         to_email: Recipient email address
         subject: Email subject line
         html_body: HTML email body
-        
+
     Returns:
         MIMEText message object ready to send
     """
@@ -377,4 +386,8 @@ def send_single_email(
         return False
     finally:
         if conn:
+<<<<<<< fix/email-connection
             pool.return_connection(conn)
+=======
+            pool.return_connection(conn)
+>>>>>>> staging
