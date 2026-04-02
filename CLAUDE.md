@@ -37,6 +37,9 @@ python -m compileall -q .
 # Run pipeline for a single city (requires OPENAI_API_KEY + TAVILY_API_KEY)
 python main.py <city_name>
 
+# Run pipeline for a city scoped to a specific topic
+python main.py <city_name> -t <topic_name>
+
 # Run pipeline with custom output file
 python main.py <city_name> -o report.md
 
@@ -87,9 +90,9 @@ legislation_finder → content_retrieval → note_taker → summary_writer
   - `state.py`: `ChainData` TypedDict (pipeline state contract)
   - `pydantic.py`: Structured output schemas (e.g., `WriterOutput`)
 - `mcp/`: Per-service MCP (Model Context Protocol) client + server pairs for Tavily search/extraction, Wikidata reliability analysis, and political figure discovery. Each service lives in its own subdirectory (`tavily/`, `wikidata/`, `political_figures/`) with a `client.py` and `server.py`. Agents call `client.py` functions; `server.py` runs as a FastMCP subprocess via stdio transport. `session.py` provides `MCPSessionManager` for reusing subprocesses across tool calls within one agent invocation (avoids spawning a new process per tool call).
-- `report_cache.py`: Module-level in-memory cache for city pipeline reports. Stores reports incrementally as each pipeline thread completes via `store(city, report)`. Other components retrieve reports via `get(city)`, `get_all()`, or `build_from_results(results)`. The module itself acts as a singleton — import `from utils import report_cache` from anywhere. Replaces the former `global_data/` directory.
+- `report_cache.py`: Module-level in-memory cache for city+topic pipeline reports. Stores reports incrementally as each pipeline thread completes via `store(city, topic, report)`. Other components retrieve reports via `get(city, topic)`, `get_for_city(city)`, `get_all()`, or `build_from_results(results)`. The cache is keyed as `{city: {topic: report}}`. The module itself acts as a singleton — import `from utils import report_cache` from anywhere.
 - `context_compressor.py`: LLMLingua-2 wrapper (`compress_text()`) that semantically compresses raw page content before it enters pipeline state, preventing context overflow on large cities.
-- `supabase_client.py`: Loads supported cities from Supabase, manages subscriptions
+- `supabase_client.py`: Loads supported cities and topics from Supabase, manages subscriptions with topic preferences via the `subscription_topics` junction table
 
 **Configuration** (`config/`):
 - `system_prompts/`: Prompt templates for agents and nodes
@@ -141,16 +144,16 @@ legislation_finder → content_retrieval → note_taker → summary_writer
 - Together these reduce LLM request volume ~40% while maintaining research quality
 
 **In-memory report cache (`utils/report_cache.py`)**
-- Module-level dict cache replaces the former `global_data/build_city_reports_dict.py` one-shot transformation
-- Reports are cached incrementally via `report_cache.store()` as each pipeline thread completes in the `as_completed` loop, rather than batch-transforming all results after the fact
-- The email dispatcher receives reports via `report_cache.get_all()`, which returns a snapshot copy (`dict[str, str]`)
+- Module-level nested dict cache keyed by `{city: {topic: report}}`
+- Reports are cached incrementally via `report_cache.store(city, topic, report)` as each pipeline thread completes
+- The email dispatcher receives reports via `report_cache.get_all()`, which returns a deep copy (`dict[str, dict[str, str]]`)
 - Any component can access cached reports by importing the module: `from utils import report_cache`
 - Empty/falsy reports are silently skipped by `store()`, matching the previous filtering behavior
 - Cache is cleared between runs via `clear()` or `build_from_results()`
 
 **Concurrency model**
-- `runners/run_container_job.py` uses `ThreadPoolExecutor` for multi-city runs
-- One city per thread; no shared state between cities (safe for concurrent execution)
+- `runners/run_container_job.py` uses `ThreadPoolExecutor` for multi-city, multi-topic runs
+- One (city, topic) pair per thread; no shared state between pipeline instances (safe for concurrent execution)
 
 ## LLM Configuration
 
@@ -185,7 +188,7 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 
 **State Passing**
 - Pipeline state is a `ChainData` TypedDict. Each node receives it as input, modifies relevant fields, and returns it.
-- Example: `legislation_finder_node` receives `{"city": str}`, returns `{"city": str, "legislation_sources": list[str], ...}`
+- Example: `legislation_finder_node` receives `{"city": str, "topic": str}`, returns `{"city": str, "topic": str, "legislation_sources": list[str], ...}`
 
 **LLM Calls**
 - Structured output: use `get_structured_llm(OutputSchema)` → returns a Runnable that enforces schema
