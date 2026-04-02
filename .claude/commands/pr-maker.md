@@ -14,3 +14,5 @@ Use one of these prefixes in the PR title:
 # Rules
 
 - Never merge the PR without human approval.
+- Do not add Generated with Claude Code within the body of PR
+- Do not add a Test Plan section
