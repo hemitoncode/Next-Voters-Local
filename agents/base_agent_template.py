@@ -26,6 +26,7 @@ from langgraph.types import Command
 
 from utils.schemas import ReflectionEntry, BaseAgentState
 from utils.llm import get_llm, get_mini_llm
+from utils.llm.config import DEFAULT_LLM_CONFIG
 from config.system_prompts import reflection_prompt
 
 StateType = TypeVar("StateType")
@@ -115,11 +116,11 @@ class BaseReActAgent:
         state_schema: Type[BaseAgentState],
         tools: list,
         system_prompt: Union[str, Callable[[StateType], str]],
-        # Optional LLM config
-        model_name: str = "gpt-4o",
-        temperature: float = 0.0,
-        max_tokens: int = 2000,
-        timeout: int = 30,
+        # Optional LLM config — defaults pulled from DEFAULT_LLM_CONFIG
+        model_name: str = DEFAULT_LLM_CONFIG["model"],
+        temperature: float = DEFAULT_LLM_CONFIG["temperature"],
+        max_tokens: int = DEFAULT_LLM_CONFIG["max_tokens"],
+        timeout: int = DEFAULT_LLM_CONFIG["timeout"],
     ):
         self.state_schema = state_schema
         # Always include reflection_tool by default
