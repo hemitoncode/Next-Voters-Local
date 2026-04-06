@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 
 from agents.base_agent_template import BaseReActAgent
-from utils.tools import web_search
+from utils.tools import web_search, create_calendar_event
 from utils.schemas import LegislationFinderState
 from config.system_prompts import legislation_finder_sys_prompt
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _agent = BaseReActAgent(
     state_schema=LegislationFinderState,
-    tools=[web_search],
+    tools=[web_search, create_calendar_event],
     system_prompt=lambda state: legislation_finder_sys_prompt.format(
         input_city=state.get("city", "Unknown"),
         last_week_date=(datetime.today() - timedelta(days=7)).strftime("%B %d, %Y"),

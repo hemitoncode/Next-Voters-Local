@@ -3,6 +3,7 @@
 from utils.schemas.pydantic import (
     ReflectionEntry,
     WriterOutput,
+    LegislativeEvent,
 )
 from utils.schemas.state import (
     BaseAgentState,
@@ -13,6 +14,7 @@ from utils.schemas.state import (
 __all__ = [
     "ReflectionEntry",
     "WriterOutput",
+    "LegislativeEvent",
     "BaseAgentState",
     "LegislationFinderState",
     "ChainData",
