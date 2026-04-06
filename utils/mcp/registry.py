@@ -161,6 +161,7 @@ def is_configured(server: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _TAVILY_SERVER_PATH = str(_PROJECT_ROOT / "utils" / "mcp" / "tavily" / "server.py")
+_GOOGLE_CALENDAR_SERVER_PATH = str(_PROJECT_ROOT / "utils" / "mcp" / "google_calendar" / "server.py")
 
 
 def _tavily_api_key() -> str:
@@ -183,8 +184,8 @@ register(
 
 register(
     "google_calendar",
-    command="npx",
-    args=["-y", "@cocal/google-calendar-mcp"],
+    command=sys.executable,
+    args=[_GOOGLE_CALENDAR_SERVER_PATH],
     env=lambda: {
         "GOOGLE_OAUTH_CREDENTIALS": os.getenv("GOOGLE_OAUTH_CREDENTIALS", ""),
     },

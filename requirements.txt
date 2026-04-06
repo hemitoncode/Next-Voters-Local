@@ -16,3 +16,5 @@ tavily-python
 llmlingua
 deepl
 pymupdf4llm
+google-api-python-client
+google-auth-oauthlib

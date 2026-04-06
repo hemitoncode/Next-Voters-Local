@@ -1,5 +1,6 @@
-"""Google Calendar MCP service — event creation via @cocal/google-calendar-mcp.
+"""Google Calendar MCP service — event management via the Google Calendar API v3.
 
-Server is an npm package registered in utils.mcp.registry.
-No Python client code in this directory.
+server.py: FastMCP server registered in utils.mcp.registry (runs as subprocess)
+  Tools: create_event, list_events, delete_event
+  Auth: GOOGLE_OAUTH_CREDENTIALS env var → path to authorized-user JSON file
 """

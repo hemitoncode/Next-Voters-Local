@@ -84,15 +84,15 @@ async def create_calendar_event(
 
         args: dict[str, Any] = {
             "summary": f"[{city}] {title}",
-            "start": {"dateTime": start_date},
-            "end": {"dateTime": resolved_end},
+            "start_time": start_date,
+            "end_time": resolved_end,
         }
         if full_description:
             args["description"] = full_description
         if location:
             args["location"] = location
 
-        result = await mcp.call("google_calendar", "create-event", args)
+        result = await mcp.call("google_calendar", "create_event", args)
         link = result.get("htmlLink") or result.get("id", "no link")
         msg = f"Calendar event created: '{title}' on {start_date} — {link}"
         logger.info(msg)
