@@ -1,23 +1,11 @@
-"""Tool helpers for external data services."""
+"""Tool adapters for external data services.
 
-from utils.tools.political_figures import (
-    detect_country_from_city,
-    fetch_canadian_political_figures,
-    fetch_american_political_figures,
-)
-from utils.tools.wikidata import (
-    search_entity,
-    get_metadata,
-    execute_sparql,
-    get_org_classification,
-)
+Each tool is a thin adapter that calls an MCP server and wraps results
+in LangGraph Commands for state updates.
+"""
 
-__all__ = [
-    "detect_country_from_city",
-    "fetch_canadian_political_figures",
-    "fetch_american_political_figures",
-    "search_entity",
-    "get_metadata",
-    "execute_sparql",
-    "get_org_classification",
-]
+from utils.tools.web_search import web_search
+from utils.tools.reflection import reflection_tool
+from utils.tools.create_calendar_event import create_calendar_event
+
+__all__: list[str] = ["web_search", "reflection_tool", "create_calendar_event"]

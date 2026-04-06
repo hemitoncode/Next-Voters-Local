@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableLambda
 from config.constants import AGENT_RECURSION_LIMIT
 from utils.schemas import ChainData
 from utils.async_runner import run_async
-from utils.mcp.tavily.client import managed_tavily_session
+from utils.mcp import registry as mcp
 from utils.source_reliability import filter_sources
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,9 @@ async def _invoke_legislation_finder(city: str) -> dict:
     """Invoke the legislation finder agent with an initial task message."""
     from agents.legislation_finder import legislation_finder_agent
     async with AsyncExitStack() as stack:
-        await stack.enter_async_context(managed_tavily_session())
+        await stack.enter_async_context(mcp.session("tavily"))
+        if mcp.is_configured("google_calendar"):
+            await stack.enter_async_context(mcp.session("google_calendar"))
         return await legislation_finder_agent.ainvoke(
             {
                 "city": city,
@@ -33,9 +35,8 @@ def run_legislation_finder(inputs: ChainData) -> ChainData:
     city = inputs.get("city", "Unknown")
     agent_result = run_async(lambda: _invoke_legislation_finder(city))
 
-    # Extract URLs from raw sources collected by web_search tool calls.
-    raw_sources = agent_result.get("raw_legislation_sources", [])
-    all_urls = [s["url"] for s in raw_sources if s.get("url")]
+    # Extract URLs from sources collected by web_search tool calls.
+    all_urls = agent_result.get("legislation_sources", [])
     # Deduplicate while preserving order
     seen: set[str] = set()
     unique_urls: list[str] = []
@@ -45,16 +46,25 @@ def run_legislation_finder(inputs: ChainData) -> ChainData:
             unique_urls.append(url)
 
     # Domain-level reliability filter (no API key, no external service).
-    # Accepts government, legislative, news, and other non-blocked domains.
     logger.info("Source reliability check for %d unique URLs:", len(unique_urls))
     accepted = filter_sources(unique_urls)
     legislation_sources = [s["url"] for s in accepted]
 
+    # Extract and deduplicate legislative events by (title, start_date).
+    raw_events = agent_result.get("legislative_events", [])
+    seen_events: set[tuple[str, str]] = set()
+    legislative_events = []
+    for ev in raw_events:
+        key = (ev.title, ev.start_date)
+        if key not in seen_events:
+            seen_events.add(key)
+            legislative_events.append(ev)
+
     logger.info(
-        "Legislation finder for %s: %d accepted / %d unique / %d raw",
-        city, len(legislation_sources), len(unique_urls), len(raw_sources),
+        "Legislation finder for %s: %d accepted / %d unique, %d events",
+        city, len(legislation_sources), len(unique_urls), len(legislative_events),
     )
-    return {**inputs, "legislation_sources": legislation_sources}
+    return {**inputs, "legislation_sources": legislation_sources, "legislative_events": legislative_events}
 
 
 legislation_finder_chain = RunnableLambda(run_legislation_finder)

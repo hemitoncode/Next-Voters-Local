@@ -1,6 +1,6 @@
 """Shared Pydantic models used to structure LLM responses."""
 
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,39 +22,24 @@ class ReflectionEntry(BaseModel):
     )
 
 
-class IndividualReliabilityAnalysis(BaseModel):
-    """Reliability analysis for a source."""
+class LegislativeEvent(BaseModel):
+    """A legislative event extracted from search results."""
 
-    url: Optional[str] = Field(default=None, description="URL of the source")
-    reliability_score: Optional[float] = Field(
-        default=None, description="Reliability score 0-1"
+    title: str = Field(description="Event title (e.g. 'City Council Meeting — Zoning Vote')")
+    description: Optional[str] = Field(
+        default=None, description="Brief description of what will happen at this event"
     )
-    reasoning: Optional[str] = Field(
-        default=None, description="Reasoning for the score"
+    start_date: str = Field(
+        description="Start date/time in ISO 8601 format (YYYY-MM-DDTHH:MM:SS)"
     )
-
-
-class SourceReliabilityJudgment(BaseModel):
-    """Single source reliability judgment."""
-
-    url: str = Field(description="URL of the source")
-    organization: str = Field(description="Organization name")
-    tier: Literal[
-        "highly_reliable", "conditionally_reliable", "unreliable", "unknown"
-    ] = Field(description="Reliability classification tier")
-    rationale: str = Field(
-        description="Reasoning citing specific Wikidata signal, max 200 chars"
+    end_date: Optional[str] = Field(
+        default=None, description="End date/time in ISO 8601 format"
     )
-    accepted: bool = Field(
-        description="True only for highly_reliable or conditionally_reliable"
+    location: Optional[str] = Field(
+        default=None, description="Physical or virtual location of the event"
     )
-
-
-class ReliabilityAnalysisResult(BaseModel):
-    """Structured output from reliability analysis LLM call."""
-
-    judgments: list[SourceReliabilityJudgment] = Field(
-        description="One judgment per source"
+    source_url: Optional[str] = Field(
+        default=None, description="URL where this event was found"
     )
 
 

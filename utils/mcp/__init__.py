@@ -1,47 +1,15 @@
 """MCP client utilities for connecting to external services.
 
-Each subdirectory is a self-contained MCP service with two files:
-  - client.py: The interface app code imports. Connects to the server via stdio subprocess.
-  - server.py: The FastMCP server that runs as a standalone subprocess. Not imported directly.
+Primary interface: ``utils.mcp.registry`` — import as ``from utils.mcp import registry as mcp``.
+
+Internal modules:
+  - registry.py: Declarative server registry (session management, tool dispatch)
+  - session.py: MCPSessionManager (ContextVar-based session reuse)
+  - _shared.py: parse_mcp_result helper
+  - tavily/server.py: FastMCP server (runs as subprocess, not imported directly)
+  - tavily/extract.py: Tavily SDK content extraction (direct API call, not MCP)
 """
 
-from utils.mcp.tavily import (
-    get_api_key,
-    get_tavily_session,
-    search_legislation,
-    search_political_content,
-    extract_search_results,
-    extract_url_content,
-)
-from utils.mcp.wikidata import (
-    get_wikidata_session,
-    search_entity,
-    get_org_classification,
-    analyze_reliability,
-)
-from utils.mcp.political_figures import (
-    get_political_figures_session,
-    find_political_figures,
-    extract_commentary,
-    search_politician_tweets,
-)
+from utils.mcp import registry  # noqa: F401 — ensure registrations run at import time
 
-__all__ = [
-    # Tavily
-    "get_api_key",
-    "get_tavily_session",
-    "search_legislation",
-    "search_political_content",
-    "extract_search_results",
-    "extract_url_content",
-    # Wikidata
-    "get_wikidata_session",
-    "search_entity",
-    "get_org_classification",
-    "analyze_reliability",
-    # Political Figures
-    "get_political_figures_session",
-    "find_political_figures",
-    "extract_commentary",
-    "search_politician_tweets",
-]
+__all__ = ["registry"]
