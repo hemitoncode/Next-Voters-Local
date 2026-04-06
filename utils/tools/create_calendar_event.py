@@ -30,6 +30,28 @@ def _default_end_time(start_date: str) -> str:
         return start_date
 
 
+async def _event_exists(title: str, start_date: str, city: str) -> bool:
+    """Return True if a matching event already exists in the calendar for this date.
+
+    Queries the calendar for the same day as start_date and checks for a title
+    match against the city-prefixed summary used when creating events.
+    """
+    try:
+        date_part = start_date[:10]  # "YYYY-MM-DD"
+        result = await mcp.call("google_calendar", "list_events", {
+            "time_min": f"{date_part}T00:00:00Z",
+            "time_max": f"{date_part}T23:59:59Z",
+            "max_results": 50,
+        })
+        target = f"[{city}] {title}".lower()
+        return any(
+            ev.get("summary", "").lower() == target
+            for ev in result.get("items", [])
+        )
+    except Exception:
+        return False  # if the check fails, proceed with creation
+
+
 @tool
 async def create_calendar_event(
     title: str,
@@ -74,6 +96,11 @@ async def create_calendar_event(
             f"Event recorded (Google Calendar not configured): "
             f"'{title}' on {start_date}"
         )
+        logger.info(msg)
+        return ok(tool_call_id, msg, legislative_events=[event])
+
+    if await _event_exists(title, start_date, city):
+        msg = f"Calendar event already exists, skipping: '{title}' on {start_date}"
         logger.info(msg)
         return ok(tool_call_id, msg, legislative_events=[event])
 
