@@ -25,6 +25,7 @@ warnings.filterwarnings(
 from utils.supabase_client import get_supported_cities_from_db, get_supported_topics
 from utils import report_cache
 from utils.report_translator import translate_all_reports
+from utils.report_storage import upload_all as upload_reports_to_storage
 from pipelines.nv_local import run_pipeline
 from pipelines.node.email_dispatcher import dispatch_emails_to_subscribers
 
@@ -161,6 +162,9 @@ def main() -> int:
         logger.info("Translating reports to Spanish and French...")
         translations = translate_all_reports(all_reports)
         report_cache.store_all_translations(translations)
+
+        logger.info("Uploading HTML reports to Supabase Storage...")
+        upload_reports_to_storage(all_reports, translations=translations)
 
         logger.info("Dispatching emails to subscribers...")
         dispatch_emails_to_subscribers(all_reports, translations=translations)
