@@ -14,7 +14,7 @@
 
 Next Voters uses AI agents to find, research, and summarize municipal legislation — making government information accessible to communities that cannot afford the time or resources to track what their local officials are doing.
 
-Many people — working families, elderly residents, anyone already stretched thin — are effectively locked out of the legislative process simply because keeping up with city council agendas is a full-time job. Next Voters automates that work so you don't have to.
+Many people — working families, elderly residents, anyone already stretched thin — are effectively locked out of the legislative process simply because keeping up with city council agendas is a full-time job. Next Voters automates that work so you don't have to through an AI agent!
 
 ## What It Does
 
