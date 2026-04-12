@@ -98,9 +98,8 @@ Email dispatch is **decoupled from the pipeline** — it runs as a post-pipeline
   - `compressor.py`: LLMLingua-2 wrapper (`compress_text()`) that semantically compresses raw page content before it enters pipeline state, preventing context overflow on large cities.
   - `pdf_extractor.py`: PDF detection (HEAD request + suffix check) and PDF-to-Markdown conversion via pymupdf4llm.
   - `source_reliability.py`: Domain-level source reliability scoring and filtering — classifies URLs into government, legislative, news, other, or blocked tiers.
-- `mcp/`: Per-service MCP (Model Context Protocol) client + server pairs for Tavily search/extraction. Each service lives in its own subdirectory (`tavily/`) with a `client.py` and `server.py`. Agents call `client.py` functions; `server.py` runs as a FastMCP subprocess via stdio transport. `session.py` provides `MCPSessionManager` for reusing subprocesses across tool calls within one agent invocation (avoids spawning a new process per tool call). Note: DeepL translation was moved out of MCP into a direct SDK call (`utils/report/translator.py`).
 - `email.py`: Consolidated email utilities — `SMTPConnectionPool` (thread-safe, context manager, NOOP health checks for stale connections), `is_email_configured()`, `load_template()`, `convert_markdown_to_html()`, `render_template()`, `create_mime_message()`, `send_single_email()`. Single source of truth for all SMTP and email rendering logic.
-- `tools/`: Agent tool adapters with LangChain `@tool` decorators, re-exported via `__init__.py` (e.g., `reflection.py`, `web_search.py`). Agents import tools from here rather than defining them inline.
+- `tools/`: Agent tool adapters with LangChain `@tool` decorators, re-exported via `__init__.py` (e.g., `reflection.py`, `web_search.py`). Also contains service module `tavily.py` and a `utils/` subdirectory for helpers (`extract.py`). Google Calendar integration uses a remote MCP server (`https://gcal.mintmcp.com/mcp`) loaded via `langchain-mcp-adapters` in `agents/legislation_finder.py`.
 - `supabase_client.py`: Loads supported cities, topics, and languages from Supabase, manages subscriptions with topic and language preferences via the `subscription_topics` junction table and `preferred_language` FK
 
 **Templates** (`templates/`):
@@ -108,12 +107,11 @@ Email dispatch is **decoupled from the pipeline** — it runs as a post-pipeline
 
 **Configuration** (`config/`):
 - `system_prompts/`: Prompt templates for agents and nodes
-- `search_profiles/`: Tavily search profile YAML files (`legislation.yaml`) that control domain allow-lists, date windows, and query structure (city-specific query refinement)
 - `constants.py`: Pipeline-wide tuneable constants: `COMPRESSION_RATE`, `MIN_CHARS_TO_COMPRESS`, `MAX_AGENT_MESSAGES`, `MAX_REFLECTION_ENTRIES`, `AGENT_RECURSION_LIMIT`
 
 ### Data Flow Example
 
-1. **Legislation Finder**: Agent uses Tavily search (via MCP) with prompt-based source filtering → outputs list of URLs
+1. **Legislation Finder**: Agent uses Tavily search with prompt-based source filtering → outputs list of URLs
 2. **Content Retrieval**: Fetches each URL's text via Tavily Extract (with `markdown.new` as fallback); each block is then compressed by LLMLingua-2 before being stored → list of compressed text blocks
 3. **Note Taker**: LLM summarizes all blocks into dense notes
 4. **Summary Writer**: LLM extracts structured data (title, category, impact, etc.) → `WriterOutput`
@@ -144,11 +142,10 @@ Email dispatch is **decoupled from the pipeline** — it runs as a post-pipeline
 - Compression is applied per-source (not once on the concatenated batch) to keep the logic local to where data enters the pipeline
 - Short content (<1000 chars) bypasses compression entirely; model is lazy-loaded on first use, no API key or GPU required
 
-**MCP server architecture for all external tools**
-- All agent tools are thin adapters in `utils/tools/` that call FastMCP servers via stdio transport — no custom HTTP clients or manual JSON handling
-- Each service (`tavily/`) has a `server.py` that owns the business logic and a `client.py` that manages the session lifecycle
+**Direct SDK calls for external services**
+- Tavily search functions live in `utils/tools/tavily.py` as direct SDK calls; tool adapters in `utils/tools/` wrap them for LangGraph
+- Google Calendar uses a remote MCP server (`https://gcal.mintmcp.com/mcp`); `create_event` tool is loaded via `langchain-mcp-adapters` at agent build time in `agents/legislation_finder.py`
 - Tool adapters live in `utils/tools/` with re-exports via `__init__.py`; agents import them rather than defining tools inline
-- `MCPSessionManager` (in `utils/mcp/session.py`) pre-initializes one subprocess per agent invocation and reuses it across all tool calls, preventing the process-per-call overhead that was producing process termination warnings
 
 **Rate limiting: bounded agent iterations**
 - Pipeline nodes pass `AGENT_RECURSION_LIMIT=25` (from `config/constants.py`) at `ainvoke()` time via the `config` dict, preventing unbounded tool call loops that caused 429 Too Many Requests errors in multi-city runs
@@ -202,7 +199,7 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 
 **Core** (required):
 - `OPENAI_API_KEY`: OpenAI API access
-- `TAVILY_API_KEY`: Tavily Search + Extract (web search and content retrieval via MCP)
+- `TAVILY_API_KEY`: Tavily Search + Extract (web search and content retrieval)
 
 **Optional**:
 - `SUPABASE_URL`, `SUPABASE_KEY`: Load supported cities + email subscribers
@@ -227,7 +224,7 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 **Agents**
 - Inherit from `BaseReActAgent` (see `agents/base_agent_template.py`)
 - Tools are defined in `utils/tools/` and re-exported via `utils/tools/__init__.py`; agents import them (e.g., `from utils.tools import web_search`)
-- Each tool adapter calls the appropriate MCP client function and returns a LangGraph `Command` for state updates
+- Each tool adapter calls service functions from `utils/tools/tavily.py` and returns a LangGraph `Command` for state updates
 - Agent builds a LangGraph StateGraph with `call_model` and `tool_node` nodes; `recursion_limit` is applied at invoke-time via the config dict (not at compile-time)
 
 **Error Handling**
@@ -241,7 +238,7 @@ Use `get_llm()`, `get_mini_llm()` (same config as default), `get_structured_llm(
 
 - **Typed data structures**: Use `TypedDict` or Pydantic models at pipeline boundaries (between nodes, agents, external APIs)
 - **No dedicated config file**: Configuration is inlined (e.g., `DEFAULT_LLM_CONFIG` in `utils/llm/config.py`)
-- **Minimal dependencies**: Only essential packages in `requirements.txt`; MCP clients are lightweight wrappers
+- **Minimal dependencies**: Only essential packages in `requirements.txt`
 - **Docstrings**: Required for all functions, classes, and methods
 
 ## Deployment
@@ -280,7 +277,7 @@ docker run -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... nv-local
 
 **Adding an agent tool**:
 1. Create the tool adapter function in `utils/tools/` with the LangChain `@tool` decorator, then re-export it from `utils/tools/__init__.py`
-2. If the tool needs an external service, add the logic to the appropriate MCP server (`utils/mcp/<service>/server.py`) and call it from a client function (`utils/mcp/<service>/client.py`)
+2. If the tool needs an external service, add the business logic as a plain function in the appropriate service module (e.g., `utils/tools/tavily.py`) or create a new one; shared helpers go in `utils/tools/utils/`
 3. Import the tool in the agent file (e.g., `from utils.tools import web_search`) and pass it to the agent constructor; it is automatically included in `ToolNode`
 
 **Changing LLM model or config**:
@@ -290,5 +287,5 @@ docker run -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... nv-local
 **Debugging a city pipeline failure**:
 1. Run single city: `python main.py <city_name>` (no -q flag to see output)
 2. Check error message in stdout/stderr
-3. Likely causes: missing env vars (`OPENAI_API_KEY`, `TAVILY_API_KEY`), Tavily Extract failure on a domain, MCP subprocess initialization error (check that project root is on `sys.path`), agent hitting `recursion_limit=25` before completing, LLMLingua-2 model download failing on cold start, SMTP pool exhaustion (check `utils/email_failures.json`)
+3. Likely causes: missing env vars (`OPENAI_API_KEY`, `TAVILY_API_KEY`), Tavily Extract failure on a domain, agent hitting `recursion_limit=25` before completing, LLMLingua-2 model download failing on cold start, SMTP pool exhaustion (check `utils/email_failures.json`)
 4. Look at per-city result dict in `runners/run_container_job.py:main()` for error field
