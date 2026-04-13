@@ -3,6 +3,11 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp"
+    },
+    "obsidian": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/obsidian-mcp",
+      "args": ["/Users/hemitpatel/Desktop/Local/local_obsidian_vault"]
     }
   }
 }
