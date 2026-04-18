@@ -110,6 +110,7 @@ def search_legislation(
         "max_results": fetch_count,
         "search_depth": "advanced",
         "topic": "general",
+        "time_range": "week",
         "include_answer": False,
         "include_images": False,
         "include_raw_content": False,
