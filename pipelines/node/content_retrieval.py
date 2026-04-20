@@ -10,6 +10,12 @@ import logging
 import httpx
 from langchain_core.runnables import RunnableLambda
 
+from config.constants import (
+    CONTENT_MAX_CHARS_PER_URL,
+    CONTENT_MAX_URLS,
+    CONTENT_MIN_CHARS_PER_URL,
+    CONTENT_TOTAL_CHAR_BUDGET,
+)
 from utils.async_runner import run_async
 from utils.concurrency import run_parallel
 from utils.content.compressor import compress_text
@@ -56,10 +62,14 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
         return {**inputs, "legislation_content": []}
 
     # Cap URLs to avoid context overflow in downstream LLM calls.
-    # 20 content-rich pages (e.g. NYC) can exceed the 272K-token input limit
-    # even after LLMLingua-2 compression; 10 sources is ample for research quality.
-    ordered_urls = ordered_urls[:10]
+    ordered_urls = ordered_urls[:CONTENT_MAX_URLS]
     urls_to_fetch = [u for u in urls_to_fetch if u in set(ordered_urls)]
+
+    # Adaptive per-URL char budget: spread the total budget across the URLs
+    # we actually have. Small cities (few URLs) each get more context; large
+    # cities compress harder. Floors/ceilings prevent degenerate splits.
+    per_url_cap = CONTENT_TOTAL_CHAR_BUDGET // max(len(ordered_urls), 1)
+    per_url_cap = max(CONTENT_MIN_CHARS_PER_URL, min(CONTENT_MAX_CHARS_PER_URL, per_url_cap))
 
     # Fetch non-PDF URLs via Tavily Extract.
     url_to_content: dict[str, str] = {}
@@ -91,16 +101,20 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
             except (httpx.HTTPError, httpx.InvalidURL, ValueError):
                 pass
 
+    def _compress_capped(url: str) -> str:
+        raw = url_to_content[url]
+        if len(raw) > per_url_cap:
+            raw = raw[:per_url_cap]
+        return compress_text(raw)
+
     # Compress newly-fetched pages in parallel. BERT forward passes release
     # the GIL, so threads give real wall-clock wins over the previous
-    # sequential compress_text loop.
+    # sequential compress_text loop. Raw text is capped at per_url_cap
+    # before compression to keep the downstream LLM context bounded.
     compress_targets = [u for u in ordered_urls if u in url_to_content and u not in pre_fetched]
     compressed_by_url: dict[str, str] = {}
     if compress_targets:
-        parallel_results = run_parallel(
-            lambda url: compress_text(url_to_content[url]),
-            compress_targets,
-        )
+        parallel_results = run_parallel(_compress_capped, compress_targets)
         for res in parallel_results:
             if res.ok and res.value is not None:
                 compressed_by_url[res.item] = res.value
@@ -116,8 +130,12 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
         elif url in compressed_by_url:
             legislation_content.append(compressed_by_url[url])
         elif url in url_to_content:
-            # Compression failed; fall back to the raw fetched text.
-            legislation_content.append(url_to_content[url])
+            # Parallel compression failed; fall back to the capped raw text
+            # so the downstream context stays bounded.
+            raw = url_to_content[url]
+            if len(raw) > per_url_cap:
+                raw = raw[:per_url_cap]
+            legislation_content.append(raw)
         else:
             legislation_content.append(f"[Failed to fetch: {url}]")
 

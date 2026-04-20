@@ -7,7 +7,7 @@ import sys
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from utils.concurrency import run_parallel
 
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 def run_pipeline_instances(
-    pipeline_runner: Callable[[str, str], dict[str, Any]],
     targets: Sequence[tuple[str, str]],
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Execute one pipeline instance per (city, topic) target concurrently.
@@ -52,7 +51,7 @@ def run_pipeline_instances(
         return results_by_target
 
     results = run_parallel(
-        lambda target: pipeline_runner(target[0], target[1]),
+        lambda target: run_pipeline(target[0], target[1]),
         ordered_targets,
     )
 
@@ -107,7 +106,7 @@ def run_pipelines_for_cities_and_topics(
     """Execute the NV Local pipeline concurrently for all (city, topic) pairs."""
 
     targets = [(city, topic) for city in cities for topic in topics]
-    return run_pipeline_instances(run_pipeline, targets)
+    return run_pipeline_instances(targets)
 
 
 def render_city_topic_reports_markdown(
@@ -150,7 +149,7 @@ def main() -> int:
 
     # Run pipelines for all (city, topic) pairs
     targets = [(city, topic) for city in cities for topic in topics]
-    results = run_pipeline_instances(run_pipeline, targets)
+    results = run_pipeline_instances(targets)
     report = render_pipeline_reports_markdown(results, targets)
 
     if output_path:
