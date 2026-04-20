@@ -11,6 +11,7 @@ import httpx
 from langchain_core.runnables import RunnableLambda
 
 from utils.async_runner import run_async
+from utils.concurrency import run_parallel
 from utils.content.compressor import compress_text
 from utils.tools.utils.extract import extract_url_content
 from utils.schemas import ChainData
@@ -90,14 +91,33 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
             except (httpx.HTTPError, httpx.InvalidURL, ValueError):
                 pass
 
+    # Compress newly-fetched pages in parallel. BERT forward passes release
+    # the GIL, so threads give real wall-clock wins over the previous
+    # sequential compress_text loop.
+    compress_targets = [u for u in ordered_urls if u in url_to_content and u not in pre_fetched]
+    compressed_by_url: dict[str, str] = {}
+    if compress_targets:
+        parallel_results = run_parallel(
+            lambda url: compress_text(url_to_content[url]),
+            compress_targets,
+        )
+        for res in parallel_results:
+            if res.ok and res.value is not None:
+                compressed_by_url[res.item] = res.value
+            else:
+                logger.warning("Compression failed for %s: %r", res.item, res.error)
+
     # Assemble final content list in the original source order.
     legislation_content: list[str] = []
     for url in ordered_urls:
         if url in pre_fetched:
             # Already compressed by the web_search tool — pass through.
             legislation_content.append(pre_fetched[url])
+        elif url in compressed_by_url:
+            legislation_content.append(compressed_by_url[url])
         elif url in url_to_content:
-            legislation_content.append(compress_text(url_to_content[url]))
+            # Compression failed; fall back to the raw fetched text.
+            legislation_content.append(url_to_content[url])
         else:
             legislation_content.append(f"[Failed to fetch: {url}]")
 
