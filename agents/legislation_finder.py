@@ -33,10 +33,14 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from agents.base_agent_template import BaseReActAgent
 from config.constants import AGENT_RECURSION_LIMIT
-from config.system_prompts import legislation_finder_sys_prompt
+from config.system_prompts import (
+    legislation_finder_subagent_sys_prompt,
+    legislation_finder_sys_prompt,
+)
 from utils.concurrency import run_parallel
 from utils.llm import get_structured_mini_llm
 from utils.schemas import LegislationFinderState, SourceAssessment
+from utils.sources import extract_url_and_snippet
 from utils.tools import web_search
 
 logger = logging.getLogger(__name__)
@@ -99,43 +103,13 @@ async def _run_discovery_agent(graph, invoke_kwargs: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-_SUBAGENT_SYSTEM = """
-You are a per-source legislation validator. For the URL below, classify it
-and decide whether it meets the research quality bar.
-
-Accept criteria (any one is sufficient):
-  - Official government / municipal website (.gov, city portal, municode,
-    legistar, council agenda portal)
-  - Factual local-news reporting on specific legislation (no opinion language)
-  - Established wire service (AP, Reuters) with concrete legislative detail
-
-Reject:
-  - Opinion pieces, editorials, blog posts
-  - Aggregators that merely *mention* legislation without specifics
-  - Paywalled content you cannot verify
-  - Irrelevant domains (marketing, social media landing pages)
-
-Produce a single structured assessment. Do not browse; reason only from the
-URL + title/snippet context provided.
-""".strip()
-
-
-def _extract_snippet(item: str | dict[str, Any]) -> tuple[str, str]:
-    """Return (url, snippet) for a discovery item — string or pre-fetched dict."""
-    if isinstance(item, dict):
-        url = str(item.get("url", "")).strip()
-        snippet = (item.get("content") or "")[:800]
-        return url, snippet
-    return str(item).strip(), ""
-
-
 def _run_per_source_subagent(city: str, item: str | dict[str, Any]) -> SourceAssessment:
     """Invoke the structured mini-LLM on one candidate URL.
 
     Returns a :class:`SourceAssessment`. On LLM failure, falls back to a
     reject decision rather than raising so the supervisor batch keeps going.
     """
-    url, snippet = _extract_snippet(item)
+    url, snippet = extract_url_and_snippet(item)
     if not url:
         return SourceAssessment(url="", accepted=False, rationale="empty url")
 
@@ -147,7 +121,7 @@ def _run_per_source_subagent(city: str, item: str | dict[str, Any]) -> SourceAss
     try:
         result = llm.invoke(
             [
-                {"role": "system", "content": _SUBAGENT_SYSTEM},
+                {"role": "system", "content": legislation_finder_subagent_sys_prompt},
                 {"role": "user", "content": user},
             ]
         )
@@ -185,7 +159,7 @@ def _dispatch_subagents(
         if r.ok and r.value is not None:
             assessments.append(r.value)
         else:
-            url, _ = _extract_snippet(r.item)
+            url, _ = extract_url_and_snippet(r.item)
             assessments.append(
                 SourceAssessment(
                     url=url,
@@ -248,7 +222,7 @@ async def invoke_legislation_finder(city: str) -> dict:
     seen: set[str] = set()
     unique_candidates: list[str | dict[str, Any]] = []
     for c in candidates:
-        url, _ = _extract_snippet(c)
+        url, _ = extract_url_and_snippet(c)
         if url and url not in seen:
             seen.add(url)
             unique_candidates.append(c)
@@ -258,7 +232,7 @@ async def invoke_legislation_finder(city: str) -> dict:
 
     filtered_sources: list[str | dict[str, Any]] = []
     for c in unique_candidates:
-        url, _ = _extract_snippet(c)
+        url, _ = extract_url_and_snippet(c)
         if url in accepted_urls:
             filtered_sources.append(c)
 
