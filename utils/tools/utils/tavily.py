@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from tavily import TavilyClient
 
-_MIN_SCORE = 0.35
+_MIN_SCORE = 0.30
 _MAX_RESULTS_CAP = 20
 
 _EXCLUDE_DOMAINS = [
@@ -90,7 +90,8 @@ def search_legislation(
     """Search for municipal legislation via Tavily.
 
     Appends the city name to the query, uses advanced search depth with
-    news topic, filters by score, and excludes low-quality domains.
+    general topic (to include government sites and legislative databases),
+    filters by score, and excludes low-quality domains.
 
     Args:
         query: The search query for legislation.
@@ -108,8 +109,8 @@ def search_legislation(
         "query": f'{query} "{city}"',
         "max_results": fetch_count,
         "search_depth": "advanced",
-        "topic": "news",
-        "days": 60,
+        "topic": "general",
+        "time_range": "week",
         "include_answer": False,
         "include_images": False,
         "include_raw_content": False,
