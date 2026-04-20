@@ -21,6 +21,16 @@ following conditions are met (whichever comes first):
 1. You have >= 3 findings, each backed by the required source minimum, AND you have completed the events search (Step 5).
 2. You have run 10 web_search calls (the hard limit).
 3. Your reflection returns next_action = "Research complete — compile final output."
+4. You have >= 1 accepted URL AND three consecutive reflections have surfaced
+   the same gap — further searches are unlikely to help. Compile whatever
+   partial findings you have and stop.
+
+## Partial Results Are Acceptable
+
+Every URL you emit via web_search is persisted to pipeline state the moment
+the tool call returns — downstream nodes can still use partial results if
+you exit early. Prefer emitting 1–2 solid sources over spiraling in pursuit
+of a 3rd that may not exist for small cities.
 
 Once a condition is met, write your final answer in the required output format and stop.
 

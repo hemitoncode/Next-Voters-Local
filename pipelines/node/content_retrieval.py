@@ -10,6 +10,12 @@ import logging
 import httpx
 from langchain_core.runnables import RunnableLambda
 
+from config.constants import (
+    CONTENT_MAX_CHARS_PER_URL,
+    CONTENT_MAX_URLS,
+    CONTENT_MIN_CHARS_PER_URL,
+    CONTENT_TOTAL_CHAR_BUDGET,
+)
 from utils.async_runner import run_async
 from utils.content.compressor import compress_text
 from utils.tools.utils.extract import extract_url_content
@@ -55,10 +61,14 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
         return {**inputs, "legislation_content": []}
 
     # Cap URLs to avoid context overflow in downstream LLM calls.
-    # 20 content-rich pages (e.g. NYC) can exceed the 272K-token input limit
-    # even after LLMLingua-2 compression; 10 sources is ample for research quality.
-    ordered_urls = ordered_urls[:10]
+    ordered_urls = ordered_urls[:CONTENT_MAX_URLS]
     urls_to_fetch = [u for u in urls_to_fetch if u in set(ordered_urls)]
+
+    # Adaptive per-URL char budget: spread the total budget across the URLs
+    # we actually have. Small cities (few URLs) each get more context; large
+    # cities compress harder. Floors/ceilings prevent degenerate splits.
+    per_url_cap = CONTENT_TOTAL_CHAR_BUDGET // max(len(ordered_urls), 1)
+    per_url_cap = max(CONTENT_MIN_CHARS_PER_URL, min(CONTENT_MAX_CHARS_PER_URL, per_url_cap))
 
     # Fetch non-PDF URLs via Tavily Extract.
     url_to_content: dict[str, str] = {}
@@ -97,7 +107,10 @@ def run_content_retrieval(inputs: ChainData) -> ChainData:
             # Already compressed by the web_search tool — pass through.
             legislation_content.append(pre_fetched[url])
         elif url in url_to_content:
-            legislation_content.append(compress_text(url_to_content[url]))
+            raw = url_to_content[url]
+            if len(raw) > per_url_cap:
+                raw = raw[:per_url_cap]
+            legislation_content.append(compress_text(raw))
         else:
             legislation_content.append(f"[Failed to fetch: {url}]")
 

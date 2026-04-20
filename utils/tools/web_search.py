@@ -14,6 +14,7 @@ from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.prebuilt.tool_node import InjectedState
 from langgraph.types import Command
 
+from config.constants import WEB_SEARCH_MAX_RESULTS
 from utils.content.compressor import compress_text
 from utils.content.pdf_extractor import is_pdf_url, download_and_parse_pdf
 from utils.tools._helpers import ok, err
@@ -51,7 +52,7 @@ async def web_search(
     query: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
     city: Annotated[str, InjectedState("city")],
-    max_results: int = 5,
+    max_results: int = WEB_SEARCH_MAX_RESULTS,
 ) -> Command:
     """Search the web for legislation related to a specific municipality or topic.
 
