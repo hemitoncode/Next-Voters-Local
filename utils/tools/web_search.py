@@ -66,6 +66,7 @@ async def web_search(
     Returns:
         A Command object that updates the state with search results.
     """
+    logger.info("web_search called: query=%r city=%r max_results=%d", query, city, max_results)
     try:
         raw_results = await asyncio.to_thread(
             search_legislation, query=query, city=city, max_results=max_results
@@ -85,10 +86,13 @@ async def web_search(
             f"{len(legislation_sources)} result(s):\n"
             + "\n".join(summary_lines)
         )
+        logger.info("web_search returning %d URLs for city=%r", len(legislation_sources), city)
 
         return ok(tool_call_id, summary, legislation_sources=legislation_sources)
 
     except ValueError as e:
+        logger.error("web_search ValueError: %s", e)
         return err(tool_call_id, f"Tavily API key not configured: {e}")
     except Exception as e:
+        logger.error("web_search failed: %s", e)
         return err(tool_call_id, f"Web search failed: {e}")
