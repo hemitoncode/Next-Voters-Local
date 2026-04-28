@@ -9,6 +9,7 @@ invocation and stay resident for the life of the process.
 """
 
 import logging
+import threading
 from typing import Optional
 
 from llmlingua import PromptCompressor
@@ -20,17 +21,20 @@ logger = logging.getLogger(__name__)
 _SCORER_MODEL = "Qwen/Qwen2.5-0.5B"
 
 _compressor: Optional[PromptCompressor] = None
+_compressor_lock = threading.Lock()
 
 
 def _get_compressor() -> PromptCompressor:
     """Lazily instantiate the shared PromptCompressor on first use."""
     global _compressor
     if _compressor is None:
-        _compressor = PromptCompressor(
-            model_name=_SCORER_MODEL,
-            use_llmlingua2=False,
-            device_map="cpu",
-        )
+        with _compressor_lock:
+            if _compressor is None:
+                _compressor = PromptCompressor(
+                    model_name=_SCORER_MODEL,
+                    use_llmlingua2=False,
+                    device_map="cpu",
+                )
     return _compressor
 
 
